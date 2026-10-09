@@ -31,22 +31,31 @@
             if (typeof name !== 'string') return undefined;
             return function () {
               const args = Array.prototype.slice.call(arguments);
-              const fail = function (msg) {
-                if (onFail) onFail({ message: msg });
+              // network が true のときは「電波がない・タイムアウト」など、通信そのものの失敗
+              const fail = function (msg, network) {
+                if (onFail) onFail({ message: msg, network: !!network });
                 else console.error('API error:', name, msg);
               };
+              // 電波が弱くて応答がないときに、いつまでも待たないよう40秒で打ち切る
+              let ctrl = null, timer = null;
+              try { ctrl = new AbortController(); timer = setTimeout(function () { ctrl.abort(); }, 40000); } catch (e) { /* 何もしない */ }
               fetch(GAS_API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify({ fn: name, args: args }),
-                redirect: 'follow'
+                redirect: 'follow',
+                signal: ctrl ? ctrl.signal : undefined
               })
                 .then(function (r) { return r.json(); })
                 .then(function (j) {
+                  if (timer) clearTimeout(timer);
                   if (j && j.ok) { if (onOk) onOk(j.result); }
-                  else fail((j && j.error) || '通信エラー');
+                  else fail((j && j.error) || '通信エラー', false);
                 })
-                .catch(function () { fail('通信エラー（ネットワークを確認してください）'); });
+                .catch(function () {
+                  if (timer) clearTimeout(timer);
+                  fail('通信エラー（ネットワークを確認してください）', true);
+                });
             };
           }
         });
@@ -58,12 +67,20 @@
 
 
   <!-- Tailwind CSS -->
+  <!-- 外部ファイルの接続を先に始めて、起動を少し速くする -->
+  <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="preconnect" href="https://script.google.com">
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Leaflet GIS Map Library -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- ピンのまとめ表示（クラスタリング） -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 
   <style>
     html, body {
@@ -195,6 +212,16 @@
       transition: transform 0.28s ease, visibility 0s linear 0s;
     }
 
+    /* まとめ表示（クラスタ）のピン */
+    .konohana-cluster-wrap { background: transparent; border: none; }
+    .konohana-cluster {
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; background: #13685e; color: #ffffff;
+      font-weight: 800; font-size: 13px; border: 3px solid #ffffff;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+    }
+    .konohana-cluster.is-urgent { box-shadow: 0 0 0 3px #f59e0b, 0 3px 10px rgba(0,0,0,0.35); }
+
     /* 管理者モード中は、上の帯の分だけ全体を下げる */
     body.admin-on { padding-top: 1.5rem; }
 
@@ -266,6 +293,10 @@
       <button id="adminMenuBtn" onclick="toggleAdminMode()" class="w-full text-left px-3.5 py-2.5 text-xs text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-xl flex items-center gap-2 transition font-semibold">
         <i id="adminMenuIcon" class="fas fa-lock text-slate-500 w-4"></i>
         <span id="adminMenuLabel">管理者モード</span>
+      </button>
+      <button id="adminCheckMenuBtn" onclick="openAdminCheck()" class="hidden w-full text-left px-3.5 py-2.5 text-xs text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-xl flex items-center gap-2 transition font-semibold">
+        <i class="fas fa-clipboard-check text-amber-500 w-4"></i>
+        <span>登録内容の確認（管理者）</span>
       </button>
       <div class="h-px bg-slate-100 my-0.5"></div>
       <button onclick="logout()" class="w-full text-left px-3.5 py-2.5 text-xs text-red-500 hover:bg-red-50 rounded-xl flex items-center gap-2 transition font-semibold">
@@ -419,6 +450,7 @@
     <div id="statusToast" class="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[10004] bg-slate-900/90 text-white text-xs px-4 py-2.5 rounded-full shadow-lg backdrop-blur-sm flex items-center gap-2 transition-all duration-300 pointer-events-none opacity-0 max-w-[90vw]">
       <i id="statusSpinner" class="fas fa-circle-notch fa-spin text-blue-400"></i>
       <span id="statusText">データを読み込んでいます...</span>
+      <button type="button" id="statusAction" onclick="runToastAction()" class="hidden shrink-0 ml-1 px-3 py-1 rounded-full bg-white/15 hover:bg-white/25 text-emerald-300 font-bold"></button>
     </div>
   </main>
 
@@ -493,6 +525,37 @@
         </button>
       </div>
       <p class="text-[11px] text-slate-400 mt-3 leading-snug">淡色・航空写真は国土地理院のタイルを使用しています（日本国内のみ）。CARTOは海外の地図サービスで、読み込めない場合は自動で標準に戻ります。</p>
+      <p class="text-[10px] text-slate-300 mt-3 text-right">バージョン <span id="appVersionLabel"></span></p>
+    </div>
+  </div>
+
+  <!-- 新しいバージョンのお知らせ -->
+  <div id="updateBanner" class="hidden fixed left-1/2 -translate-x-1/2 bottom-24 z-[10005] bg-emerald-700 text-white text-xs pl-4 pr-2 py-2 rounded-full shadow-lg items-center gap-2 btn-touch-ui max-w-[92vw]">
+    <i class="fas fa-circle-arrow-up"></i>
+    <span class="font-semibold">新しいバージョンがあります</span>
+    <button type="button" onclick="reloadForUpdate()" class="ml-1 px-3 py-1 rounded-full bg-white text-emerald-800 font-bold">更新する</button>
+    <button type="button" onclick="dismissUpdateBanner()" aria-label="閉じる" class="px-2 py-1 text-white/80"><i class="fas fa-times"></i></button>
+  </div>
+
+  <!-- 電波がなくて送れていない記録の数（タップで再送） -->
+  <button type="button" id="pendingChip" onclick="flushPending(true)" class="hidden fixed left-3 bottom-24 z-[9990] bg-amber-400 text-amber-950 text-xs font-bold px-3.5 py-2 rounded-full shadow-lg items-center gap-1.5 btn-touch-ui">
+    <i class="fas fa-cloud-arrow-up"></i><span id="pendingChipText">未送信 0件</span>
+  </button>
+
+  <!-- 登録内容の確認（管理者） -->
+  <div id="adminCheckModal" class="hidden fixed inset-0 z-[10003] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 btn-touch-ui" onclick="closeAdminCheck()">
+    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-100 p-5 sm:p-6 pb-7 max-h-[88dvh] flex flex-col">
+      <div class="flex items-center justify-between mb-3 shrink-0">
+        <div class="flex items-center gap-2 text-slate-800 font-bold text-lg">
+          <i class="fas fa-clipboard-check text-amber-500"></i>
+          <span>登録内容の確認</span>
+        </div>
+        <button type="button" onclick="closeAdminCheck()" aria-label="閉じる" class="text-slate-400 hover:text-slate-600 p-2 rounded-full hover:bg-slate-100 transition">
+          <i class="fas fa-times text-lg"></i>
+        </button>
+      </div>
+      <div id="adminCheckBody" class="flex-1 min-h-0 overflow-y-auto"></div>
+      <div id="adminCheckFooter" class="mt-3 shrink-0"></div>
     </div>
   </div>
 
@@ -771,6 +834,10 @@
     const OLD_CACHE_KEYS = ['konohana_mansion_cache_v1'];   // 旧版（リンクURLが入っていた）は削除する
     const PWHASH_KEY = 'konohana_pw_hash_v1';
     const VIEW_KEY = 'konohana_map_view_v1';
+    const APP_VERSION = '2026.10.09-3';                 // 画面を更新したら、この番号も変える（古い画面の検出に使う）
+    const ROOM_CACHE_KEY = 'konohana_room_cache_v1';    // 部屋番号一覧の端末保存（次に開くとき先に表示する）
+    const ROOM_CACHE_MAX = 40;
+    const PENDING_KEY = 'konohana_pending_v1';          // 電波がなくて送れなかった記録
     const FONT_KEY = 'konohana_font_size';
     const MAPTYPE_KEY = 'konohana_map_type_v2';
     const TOKEN_KEY = 'konohana_login_token_v1';
@@ -1316,7 +1383,9 @@
       closeHamburgerMenu();
       roomRef = { sheetName: m.sheetName, row: m.row, name: m.name };
       roomKey = mansionKey(m);
-      roomData = roomCache[roomKey] || null;
+      // 前回の内容が残っていれば、先にそれを表示しながら、裏で最新を取りに行く
+      roomData = roomCache[roomKey] || readRoomFromDisk(roomKey) || null;
+      if (roomData) { overlayPending(roomKey, roomData); roomCache[roomKey] = roomData; }
       roomError = '';
       roomLoading = true;
 
@@ -1352,6 +1421,9 @@
       if (lbl) lbl.textContent = on ? '管理者モードを終了' : '管理者モード';
       if (ico) ico.className = on ? 'fas fa-lock-open text-amber-500 w-4' : 'fas fa-lock text-slate-500 w-4';
 
+      const chk = document.getElementById('adminCheckMenuBtn');
+      if (chk) chk.classList.toggle('hidden', !on);
+
       // どの画面でも見える「管理者モード」の帯
       const strip = document.getElementById('adminStrip');
       if (strip) { strip.classList.toggle('hidden', !on); strip.classList.toggle('flex', on); }
@@ -1383,6 +1455,8 @@
     }
 
     function clearAdminState() {
+      adminCheckRun++;
+      closeAdminCheck();
       adminPasswordMem = '';
       adminLinks = {};
       adminMainUrl = '';
@@ -1493,7 +1567,9 @@
         roomLoading = false;
         if (res && res.success) {
           roomData = { floors: res.floors || [], notes: res.notes || [] };
+          overlayPending(key, roomData);
           roomCache[key] = roomData;
+          saveRoomToDisk(key, roomData);
           roomError = '';
         } else {
           roomError = (res && res.error) ? res.error : '読み込めませんでした';
@@ -1601,7 +1677,7 @@
             <button type="button" onclick="openRoomPicker(${fi}, ${ri})" class="rounded-xl border px-1 py-2 text-center transition active:scale-95 ${rm._busy ? 'opacity-60' : ''}" style="background:${st.bg};border-color:${st.bd};color:${st.tx};">
               <div class="text-sm font-bold leading-tight">${esc(rm.label)}</div>
               <div class="text-xs font-bold leading-tight mt-0.5">${rm.result ? esc(rm.result) : '—'}</div>
-              <div class="text-[10px] leading-tight opacity-80 h-3">${esc(dateText)}</div>
+              <div class="text-[10px] leading-tight opacity-80 h-3">${rm._pending ? '<i class="fas fa-cloud-arrow-up text-[9px]"></i> 送信待ち' : esc(dateText)}</div>
             </button>`;
         }).join('');
         html += `</div></div>`;
@@ -1671,6 +1747,176 @@
       applyRoomRecord('');
     }
 
+    // ============================================================
+    // 部屋番号の端末保存（次に開くとき先に表示する）／送れなかった記録の保管
+    // ============================================================
+    function loadRoomDiskCache() {
+      try { const o = JSON.parse(storageGet(ROOM_CACHE_KEY) || '{}'); return (o && typeof o === 'object') ? o : {}; }
+      catch (e) { return {}; }
+    }
+
+    function saveRoomToDisk(key, data) {
+      if (!key || !data || !Array.isArray(data.floors)) return;
+      try {
+        const all = loadRoomDiskCache();
+        all[key] = {
+          t: Date.now(),
+          data: {
+            notes: data.notes || [],
+            floors: data.floors.map(fl => ({
+              r: fl.r,
+              rooms: fl.rooms.map(rm => ({ r: rm.r, c: rm.c, label: rm.label, date: rm.date, result: rm.result }))
+            }))
+          }
+        };
+        Object.keys(all).sort((x, y) => all[y].t - all[x].t).slice(ROOM_CACHE_MAX).forEach(k => { delete all[k]; });
+        storageSet(ROOM_CACHE_KEY, JSON.stringify(all));
+      } catch (e) { /* 保存できなくても動作に影響しない */ }
+    }
+
+    function readRoomFromDisk(key) {
+      const e = loadRoomDiskCache()[key];
+      return (e && e.data && Array.isArray(e.data.floors)) ? e.data : null;
+    }
+
+    function pendingList() {
+      try { const a = JSON.parse(storageGet(PENDING_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+      catch (e) { return []; }
+    }
+
+    function samePendingTarget(p, mkey, room) {
+      return p.mkey === mkey && p.room && p.room.r === room.r && p.room.c === room.c && p.room.label === room.label;
+    }
+
+    function savePending(list) {
+      storageSet(PENDING_KEY, JSON.stringify(list));
+      updatePendingChip();
+    }
+
+    function addPending(item) {
+      const list = pendingList().filter(p => !samePendingTarget(p, item.mkey, item.room));
+      list.push(item);
+      savePending(list);
+      schedulePendingFlush();
+    }
+
+    function removePending(mkey, room) {
+      const list = pendingList();
+      const rest = list.filter(p => !samePendingTarget(p, mkey, room));
+      if (rest.length !== list.length) savePending(rest);
+    }
+
+    function updatePendingChip() {
+      const chip = document.getElementById('pendingChip');
+      const txt = document.getElementById('pendingChipText');
+      if (!chip) return;
+      const n = pendingList().length;
+      if (txt) txt.textContent = '未送信 ' + n + '件（タップで送信）';
+      chip.classList.toggle('hidden', n === 0);
+      chip.classList.toggle('flex', n > 0);
+    }
+
+    // 画面のデータに、送れていない記録の内容を重ねる（古いデータで上書きされて消えて見えないように）
+    function overlayPending(mkey, data) {
+      if (!data || !data.floors) return;
+      const list = pendingList().filter(p => p.mkey === mkey);
+      if (!list.length) return;
+      data.floors.forEach(fl => fl.rooms.forEach(rm => {
+        const p = list.find(x => x.room && x.room.r === rm.r && x.room.c === rm.c && x.room.label === rm.label);
+        if (p) { rm.result = p.result; rm.date = p.result ? p.date : ''; rm._pending = true; }
+      }));
+    }
+
+    function findRoomIn(data, room) {
+      if (!data || !data.floors) return null;
+      for (const fl of data.floors) {
+        for (const rm of fl.rooms) {
+          if (rm.r === room.r && rm.c === room.c && rm.label === room.label) return rm;
+        }
+      }
+      return null;
+    }
+
+    // yyyy/MM/dd にそろえる（読み取れなければ空文字）。「元に戻す」で元の日付を書き戻すために使う
+    function normalizeDateSlash(str) {
+      const t = String(str || '').trim();
+      let y, m, d;
+      let mm = t.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/) || t.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
+      if (mm) { y = +mm[1]; m = +mm[2]; d = +mm[3]; }
+      else {
+        mm = t.match(/^(\d{1,2})[\/\-.](\d{1,2})$/);
+        if (!mm) return '';
+        m = +mm[1]; d = +mm[2];
+        const now = new Date();
+        y = now.getFullYear();
+        if (new Date(y, m - 1, d) > now) y -= 1;   // 年がない日付は、未来にならない年とみなす
+      }
+      const dt = new Date(y, m - 1, d);
+      if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return '';
+      return y + '/' + String(m).padStart(2, '0') + '/' + String(d).padStart(2, '0');
+    }
+
+    // サーバーへ1件送る共通処理。cb(res, networkFailed)
+    function sendRoomRecord(ref, room, result, date, cb) {
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
+        google.script.run
+          .withSuccessHandler((res) => cb(res, false))
+          .withFailureHandler((err) => cb({ success: false, error: (err && err.message) || '通信エラー' }, !!(err && err.network)))
+          .setRoomResult(userAuthPassword, ref, { r: room.r, c: room.c, label: room.label }, result, date || '');
+      } else {
+        cb({ success: true, date: date || '', result: result }, false);
+      }
+    }
+
+    let pendingFlushing = false;
+    let pendingTimer = null;
+
+    function schedulePendingFlush() {
+      if (pendingTimer) return;
+      pendingTimer = setInterval(() => {
+        if (!pendingList().length) { clearInterval(pendingTimer); pendingTimer = null; return; }
+        flushPending(false);
+      }, 20000);
+    }
+
+    // 送れていない記録を、古いものから順に送る
+    function flushPending(manual) {
+      const list = pendingList();
+      if (!list.length) { updatePendingChip(); return; }
+      if (pendingFlushing || !userAuthPassword) return;
+      if (navigator.onLine === false) {
+        if (manual) showToast('まだ電波がつながっていません', false);
+        return;
+      }
+      pendingFlushing = true;
+      if (manual) showToast('未送信の記録を送っています...', true);
+
+      const item = list[0];
+      sendRoomRecord(item.ref, item.room, item.result, item.result ? item.date : '', (res, net) => {
+        pendingFlushing = false;
+        if (res && res.success) {
+          removePending(item.mkey, item.room);
+          // 画面に出ている内容も確定させる
+          [roomCache[item.mkey], (roomKey === item.mkey ? roomData : null)].forEach(d => {
+            const rm = findRoomIn(d, item.room);
+            if (rm) { rm._pending = false; rm.result = res.result || ''; rm.date = res.date || ''; }
+          });
+          if (roomCache[item.mkey]) saveRoomToDisk(item.mkey, roomCache[item.mkey]);
+          if (roomData && roomKey === item.mkey) renderRoomSheet();
+          if (pendingList().length) flushPending(false);
+          else showToast('未送信の記録をすべて送りました', false);
+        } else if (net) {
+          if (manual) showToast('送れませんでした。電波のよい場所でもう一度お試しください', false);
+          schedulePendingFlush();
+        } else {
+          // サーバーが受け付けない記録（シートの内容が変わったなど）は、保管をやめて知らせる
+          removePending(item.mkey, item.room);
+          showToast(`送れない記録がありました（${item.room.label}号室：${(res && res.error) || '不明なエラー'}）`, false);
+          if (pendingList().length) flushPending(false);
+        }
+      });
+    }
+
     // 選んだ結果を反映（画面を先に更新し、スプレッドシートへ書き込む。失敗したら元に戻す）
     function applyRoomRecord(result) {
       if (!roomPickerPos) return;
@@ -1680,36 +1926,78 @@
 
       const dataRef = roomData;
       const refCopy = roomRef;
+      const mkey = roomKey;
+      const room = { r: rm.r, c: rm.c, label: rm.label };
       const prev = { date: rm.date, result: rm.result };
+      const sendDate = result ? todaySlash() : '';
 
       rm._busy = true;
       rm.result = result;
-      rm.date = result ? todaySlash() : '';
+      rm.date = sendDate;
       closeRoomPicker();
       renderRoomSheet();
 
-      const finish = (res) => {
+      sendRoomRecord(refCopy, room, result, sendDate, (res, net) => {
         rm._busy = false;
         if (res && res.success) {
+          rm._pending = false;
+          removePending(mkey, room);
           rm.date = res.date || '';
           rm.result = res.result || '';
-          showToast(result ? `${rm.label} を「${result}」で記録しました` : `${rm.label} の記録を消しました`, false);
+          saveRoomToDisk(mkey, dataRef);
+
+          const msg = result ? `${rm.label} を「${result}」で記録しました` : `${rm.label} の記録を消しました`;
+          // 元の日付を書き戻せるときだけ「元に戻す」を出す
+          const prevDate = prev.result ? normalizeDateSlash(prev.date) : '';
+          if (!prev.result || prevDate) {
+            showToast(msg, false, { label: '元に戻す', ms: 7000, fn: () => undoRoomRecord(dataRef, refCopy, mkey, room, { result: prev.result, date: prevDate }) });
+          } else {
+            showToast(msg, false);
+          }
+        } else if (net) {
+          // 電波がない：端末に保管して、つながったら自動で送る（画面にはそのまま表示しておく）
+          rm._pending = true;
+          addPending({ mkey: mkey, ref: refCopy, room: room, result: result, date: sendDate, ts: Date.now() });
+          saveRoomToDisk(mkey, dataRef);
+          showToast('電波がないため、端末に保管しました。つながると自動で送信します', false);
         } else {
           rm.date = prev.date;
           rm.result = prev.result;
           showToast('記録できませんでした' + (res && res.error ? '：' + res.error : ''), false);
         }
         if (roomData === dataRef) renderRoomSheet();
-      };
+      });
+    }
 
-      if (typeof google !== 'undefined' && google.script && google.script.run) {
-        google.script.run
-          .withSuccessHandler(finish)
-          .withFailureHandler((err) => finish({ success: false, error: (err && err.message) || '通信エラー' }))
-          .setRoomResult(userAuthPassword, refCopy, { r: rm.r, c: rm.c, label: rm.label }, result);
-      } else {
-        finish({ success: true, date: rm.date, result: rm.result });
+    // 直前の記録を取り消して、元の状態に戻す
+    function undoRoomRecord(dataRef, ref, mkey, room, prev) {
+      const rm = findRoomIn(dataRef, room);
+      if (rm) {
+        if (rm._busy) { showToast('更新中です。少しお待ちください', false); return; }
+        rm._busy = true;
+        rm.result = prev.result;
+        rm.date = prev.result ? prev.date : '';
+        if (roomData === dataRef) renderRoomSheet();
       }
+      const sendDate = prev.result ? prev.date : '';
+      sendRoomRecord(ref, room, prev.result, sendDate, (res, net) => {
+        if (rm) rm._busy = false;
+        if (res && res.success) {
+          removePending(mkey, room);
+          if (rm) { rm._pending = false; rm.result = res.result || ''; rm.date = res.date || ''; }
+          saveRoomToDisk(mkey, dataRef);
+          showToast('元に戻しました', false);
+        } else if (net) {
+          if (rm) rm._pending = true;
+          addPending({ mkey: mkey, ref: ref, room: room, result: prev.result, date: sendDate, ts: Date.now() });
+          saveRoomToDisk(mkey, dataRef);
+          showToast('電波がないため、端末に保管しました。つながると自動で送信します', false);
+        } else {
+          showToast('元に戻せませんでした' + (res && res.error ? '：' + res.error : ''), false);
+          if (roomData === dataRef && roomKey === mkey) retryRoomLoad();
+        }
+        if (roomData === dataRef) renderRoomSheet();
+      });
     }
 
     // ============================================================
@@ -2012,6 +2300,9 @@
         }
         loadMansionData(false);
         startLocationTracking();
+        updatePendingChip();
+        setTimeout(() => flushPending(false), 1500);   // 前回送れなかった記録があれば送る
+        setTimeout(checkForUpdate, 4000);              // 古い画面のままでないか確認
       }, 100);
     }
 
@@ -2056,6 +2347,8 @@
 
       storageRemove(CACHE_KEY);
       storageRemove(PWHASH_KEY);
+      storageRemove(ROOM_CACHE_KEY);
+      Object.keys(roomCache).forEach(k => { delete roomCache[k]; });
       mansionDataList = [];
       mansionMarkersMap = {};
       if (markersLayer) markersLayer.clearLayers();
@@ -2215,6 +2508,34 @@
     // ============================================================
     // 地図
     // ============================================================
+    // ピンが多いときは、近いものを数字の丸にまとめる（読み込めなかった場合は、これまでどおり1件ずつ表示）
+    function buildClusterIcon(cluster) {
+      const kids = cluster.getAllChildMarkers();
+      const n = kids.length;
+      const urgent = kids.some(k => k.options && k.options.mansionUrgent);
+      const size = n < 10 ? 40 : (n < 50 ? 46 : 54);
+      return L.divIcon({
+        html: `<div class="konohana-cluster ${urgent ? 'is-urgent' : ''}" style="width:${size}px;height:${size}px;">${n}</div>`,
+        className: 'konohana-cluster-wrap',
+        iconSize: [size, size]
+      });
+    }
+
+    function createMarkersLayer() {
+      try {
+        if (typeof L.markerClusterGroup === 'function') {
+          return L.markerClusterGroup({
+            showCoverageOnHover: false,
+            maxClusterRadius: 48,
+            spiderfyOnMaxZoom: true,
+            disableClusteringAtZoom: 17,
+            iconCreateFunction: buildClusterIcon
+          });
+        }
+      } catch (e) { /* 通常の表示にする */ }
+      return L.layerGroup();
+    }
+
     function initMap() {
       if (map) return;
 
@@ -2227,7 +2548,7 @@
       applyMapType(mapType);
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-      markersLayer = L.layerGroup().addTo(map);
+      markersLayer = createMarkersLayer().addTo(map);
 
       map.on('click', () => closeDetailSheet());
     }
@@ -2284,11 +2605,12 @@
     function onDataError(err) {
       console.error("GAS Execution Error: ", err);
       isInitialLoading = false;
+      const retry = { label: '再試行', ms: 10000, fn: () => loadMansionData(true) };
       if (mansionDataList.length > 0) {
-        showToast("通信できないため、前回のデータを表示しています", false);
+        showToast("通信できないため、前回のデータを表示しています", false, retry);
       } else {
         renderDrawerList();
-        showToast("通信エラー: " + ((err && err.message) || String(err)), false);
+        showToast("通信エラー: " + ((err && err.message) || String(err)), false, retry);
       }
     }
 
@@ -2476,14 +2798,17 @@
       const filteredList = getFilteredMansionList();
       const bounds = [];
 
+      const newMarkers = [];
       filteredList.forEach(m => {
-        const marker = L.marker([m.lat, m.lng], { icon: buildPinIcon(m) });
+        const marker = L.marker([m.lat, m.lng], { icon: buildPinIcon(m), mansionUrgent: isUrgentMansion(m) });
         marker.on('click', () => openDetailSheet(m.id));
-        markersLayer.addLayer(marker);
+        newMarkers.push(marker);
 
         mansionMarkersMap[m.id] = marker;
         bounds.push([m.lat, m.lng]);
       });
+      if (typeof markersLayer.addLayers === 'function') markersLayer.addLayers(newMarkers);
+      else newMarkers.forEach(mk => markersLayer.addLayer(mk));
 
       if (shouldFitBounds && bounds.length > 0) {
         if (bounds.length === 1) {
@@ -2777,10 +3102,15 @@
     // ============================================================
     // トースト
     // ============================================================
-    function showToast(message, isSpinning = false) {
+    let toastTimer = null;
+    let toastActionFn = null;
+
+    // action を渡すと、メッセージの横にボタンが付く（例：「元に戻す」「再試行」）。{ label, fn, ms }
+    function showToast(message, isSpinning = false, action = null) {
       const toast = document.getElementById("statusToast");
       const text = document.getElementById("statusText");
       const spinner = document.getElementById("statusSpinner");
+      const actBtn = document.getElementById("statusAction");
 
       if (!toast || !text) return;
 
@@ -2790,20 +3120,189 @@
         else spinner.classList.add("hidden");
       }
 
+      toastActionFn = (action && action.fn) ? action.fn : null;
+      if (actBtn) {
+        if (toastActionFn) { actBtn.textContent = action.label || 'OK'; actBtn.classList.remove('hidden'); }
+        else actBtn.classList.add('hidden');
+      }
+      toast.classList.toggle('pointer-events-none', !toastActionFn);
+      toast.classList.toggle('pointer-events-auto', !!toastActionFn);
+
       toast.classList.remove("opacity-0");
       toast.classList.add("opacity-100");
 
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
       if (!isSpinning) {
-        setTimeout(() => {
-          toast.classList.remove("opacity-100");
-          toast.classList.add("opacity-0");
-        }, 3000);
+        toastTimer = setTimeout(hideToast, toastActionFn ? ((action && action.ms) || 8000) : 3000);
       }
+    }
+
+    function hideToast() {
+      const toast = document.getElementById("statusToast");
+      if (!toast) return;
+      toast.classList.remove("opacity-100");
+      toast.classList.add("opacity-0", "pointer-events-none");
+      toast.classList.remove("pointer-events-auto");
+      toastActionFn = null;
+    }
+
+    function runToastAction() {
+      const f = toastActionFn;
+      hideToast();
+      if (f) f();
+    }
+
+    // ============================================================
+    // 管理者：登録内容の確認（要確認一覧）
+    // ============================================================
+    let adminCheckRun = 0;
+    let adminCheckState = null;
+
+    function openAdminCheck() {
+      closeHamburgerMenu();
+      if (!isAdminOn()) return;
+      document.getElementById('adminCheckModal').classList.remove('hidden');
+      startAdminCheck(false);
+    }
+
+    function closeAdminCheck() {
+      adminCheckRun++;   // 実行中の確認を止める
+      const el = document.getElementById('adminCheckModal');
+      if (el) el.classList.add('hidden');
+    }
+
+    // withRooms が true のときは、部屋番号シートも順番に開いて確認する（数分かかる）
+    function startAdminCheck(withRooms) {
+      const run = ++adminCheckRun;
+      adminCheckState = { basic: [], problems: [], total: 0, done: 0, loading: true, finished: false, withRooms: !!withRooms, error: '' };
+      renderAdminCheck();
+
+      const fail = (msg) => {
+        if (run !== adminCheckRun) return;
+        adminCheckState.loading = false;
+        adminCheckState.error = msg || '確認できませんでした';
+        renderAdminCheck();
+      };
+
+      const step = (offset) => {
+        if (!(typeof google !== 'undefined' && google.script && google.script.run)) { fail('テスト環境では確認できません'); return; }
+        google.script.run
+          .withSuccessHandler((res) => {
+            if (run !== adminCheckRun) return;
+            if (!res || !res.success) { fail((res && res.error) || ''); return; }
+            if (offset === 0) adminCheckState.basic = res.basic || [];
+            adminCheckState.problems = adminCheckState.problems.concat(res.problems || []);
+            adminCheckState.total = res.total || 0;
+            adminCheckState.done = offset + (res.checked || 0);
+            if (withRooms && res.next >= 0 && res.checked > 0) {
+              renderAdminCheck();
+              step(res.next);
+            } else {
+              adminCheckState.loading = false;
+              adminCheckState.finished = true;
+              renderAdminCheck();
+            }
+          })
+          .withFailureHandler((err) => fail((err && err.message) || '通信エラー'))
+          .adminCheckMansions(userAuthPassword, adminPasswordMem, offset, withRooms ? 5 : 0);
+      };
+      step(0);
+    }
+
+    function adminCheckItemHtml(it) {
+      const url = adminLinks[[it.sheetName, it.row, it.name].join('#')];
+      const link = (url && /^https:\/\/docs\.google\.com\//.test(url))
+        ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="shrink-0 text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-300 rounded-full px-2.5 py-1">シート</a>`
+        : '';
+      return `
+        <div class="flex items-start gap-2 p-2.5 rounded-xl border border-slate-200 bg-white">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-bold text-slate-800 truncate">${esc(it.name)}</div>
+            <div class="text-[11px] text-slate-400">${esc(it.sheetName)} ・ ${esc(it.row)}行目</div>
+            <div class="text-xs text-red-600 mt-0.5 leading-snug">${esc(it.reason)}</div>
+          </div>
+          ${link}
+        </div>`;
+    }
+
+    function renderAdminCheck() {
+      const body = document.getElementById('adminCheckBody');
+      const foot = document.getElementById('adminCheckFooter');
+      const st = adminCheckState;
+      if (!body || !foot || !st) return;
+
+      let html = '';
+      if (st.error) html += `<div class="mb-3 p-3 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700">${esc(st.error)}</div>`;
+
+      if (st.loading && !st.basic.length && !st.done) {
+        html += `<div class="text-xs text-slate-400 py-6 text-center"><i class="fas fa-circle-notch fa-spin mr-1.5"></i>確認しています...</div>`;
+      }
+
+      if (st.basic.length || (!st.loading && !st.error)) {
+        html += `<div class="text-[11px] font-bold text-slate-500 mb-1.5">メインのシート（${st.basic.length}件）</div>`;
+        html += st.basic.length
+          ? `<div class="space-y-1.5 mb-4">${st.basic.map(adminCheckItemHtml).join('')}</div>`
+          : `<div class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 mb-4"><i class="fas fa-circle-check mr-1"></i>問題は見つかりませんでした</div>`;
+      }
+
+      if (st.withRooms) {
+        html += `<div class="text-[11px] font-bold text-slate-500 mb-1.5">部屋番号シート（${st.done}/${st.total}件を確認・要確認 ${st.problems.length}件）</div>`;
+        if (st.loading) html += `<div class="text-xs text-slate-400 mb-2"><i class="fas fa-circle-notch fa-spin mr-1.5"></i>順番に開いて確認しています。画面を閉じると中止します</div>`;
+        if (st.problems.length) html += `<div class="space-y-1.5">${st.problems.map(adminCheckItemHtml).join('')}</div>`;
+        else if (st.finished) html += `<div class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-2.5"><i class="fas fa-circle-check mr-1"></i>すべて読み取れました</div>`;
+      }
+
+      body.innerHTML = html;
+
+      foot.innerHTML = (!st.withRooms && !st.loading)
+        ? `<button type="button" onclick="startAdminCheck(true)" class="w-full py-3 rounded-2xl text-sm font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition">部屋番号シートも確認する（数分かかります）</button>`
+        : (st.withRooms && !st.loading ? `<button type="button" onclick="startAdminCheck(true)" class="w-full py-3 rounded-2xl text-sm font-bold border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 transition">もう一度確認する</button>` : '');
+    }
+
+    // ============================================================
+    // 新しいバージョンのお知らせ
+    // ============================================================
+    let updateBannerDismissed = false;
+
+    function checkForUpdate() {
+      if (updateBannerDismissed) return;
+      try {
+        fetch('index.html?_=' + Date.now(), { cache: 'no-store' })
+          .then(r => r.ok ? r.text() : '')
+          .then(t => {
+            const m = String(t).match(/const APP_VERSION = '([^']+)'/);
+            if (m && m[1] !== APP_VERSION) {
+              const b = document.getElementById('updateBanner');
+              if (b) { b.classList.remove('hidden'); b.classList.add('flex'); }
+            }
+          })
+          .catch(() => { /* 確認できなくても何もしない */ });
+      } catch (e) { /* 何もしない */ }
+    }
+
+    function dismissUpdateBanner() {
+      updateBannerDismissed = true;
+      const b = document.getElementById('updateBanner');
+      if (b) { b.classList.add('hidden'); b.classList.remove('flex'); }
+    }
+
+    function reloadForUpdate() {
+      // 古い画面が残らないよう、新しいアドレスで開き直す
+      location.href = location.pathname + '?v=' + Date.now();
     }
 
     // ============================================================
     // 起動時の初期化
     // ============================================================
+    const verEl = document.getElementById('appVersionLabel');
+    if (verEl) verEl.textContent = APP_VERSION;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') { checkForUpdate(); flushPending(false); }
+    });
+    window.addEventListener('online', () => flushPending(false));
+    setInterval(checkForUpdate, 15 * 60 * 1000);
+    if (pendingList().length) schedulePendingFlush();
+
     applyFontSize(fontSize);
     updateSettingsUI();
     updateKeepLoginUI();
