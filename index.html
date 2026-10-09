@@ -212,6 +212,21 @@
       transition: transform 0.28s ease, visibility 0s linear 0s;
     }
 
+    /* ログイン画面：ロゴとフォームがふわっと現れる（動きを減らす設定の端末では無効） */
+    @keyframes loginFadeUp {
+      from { opacity: 0; transform: translateY(10px) scale(0.98); }
+      to   { opacity: 1; transform: none; }
+    }
+    .login-anim-logo { animation: loginFadeUp 0.7s ease-out both; }
+    .login-anim-form { animation: loginFadeUp 0.7s ease-out 0.15s both; }
+    .login-anim-foot { animation: loginFadeUp 0.7s ease-out 0.3s both; }
+    @media (prefers-reduced-motion: reduce) {
+      .login-anim-logo, .login-anim-form, .login-anim-foot { animation: none; }
+    }
+    #loginHelp summary { list-style: none; }
+    #loginHelp summary::-webkit-details-marker { display: none; }
+    #loginHelp[open] .login-help-chevron { transform: rotate(180deg); }
+
     /* まとめ表示（クラスタ）のピン */
     .konohana-cluster-wrap { background: transparent; border: none; }
     .konohana-cluster {
@@ -334,16 +349,17 @@
   </header>
 
   <!-- ログイン画面（ディープグリーン） -->
-  <div id="loginScreen" class="fixed inset-0 z-[10001] bg-[#0e4d45] flex items-center justify-center p-6 overflow-hidden btn-touch-ui">
-    <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 400 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+  <div id="loginScreen" class="fixed inset-0 z-[10001] bg-[#0e4d45] overflow-y-auto btn-touch-ui">
+    <svg class="fixed inset-0 w-full h-full pointer-events-none" viewBox="0 0 400 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
       <circle cx="200" cy="300" r="120" fill="none" stroke="#17695f" stroke-width="1"/>
       <circle cx="200" cy="300" r="210" fill="none" stroke="#146057" stroke-width="1"/>
       <circle cx="200" cy="300" r="300" fill="none" stroke="#115850" stroke-width="1"/>
     </svg>
 
-    <div class="relative w-full max-w-[300px]">
+    <div class="relative min-h-full flex items-center justify-center p-6">
+    <div class="relative w-full max-w-[320px] py-4">
       <!-- ロゴ・名称 -->
-      <div class="text-center">
+      <div class="text-center login-anim-logo">
         <div class="w-20 h-20 rounded-2xl bg-white p-1 inline-flex items-center justify-center shadow-xl overflow-hidden">
           <svg viewBox="0 0 512 512" class="w-full h-full">
             <rect width="512" height="512" rx="110" fill="#ffffff"/>
@@ -351,47 +367,85 @@
             <text x="256" y="424" fill="#0e4d45" font-family="-apple-system, BlinkMacSystemFont, Arial, sans-serif" font-weight="800" font-size="38" letter-spacing="3" text-anchor="middle">KONOHANA KUIKI</text>
           </svg>
         </div>
-        <h2 class="mt-3 text-xl font-bold text-white tracking-tight">此花区域</h2>
-        <div class="mt-0.5 text-[10px] tracking-[0.3em] text-[#a7d3cb] font-semibold">KONOHANA KUIKI</div>
+        <h2 class="mt-3 text-2xl font-bold text-white tracking-tight">此花区域</h2>
+        <div class="mt-1 text-[11px] tracking-[0.3em] text-[#d3eee8] font-semibold">KONOHANA KUIKI</div>
       </div>
 
       <!-- ログイン状態の確認中 -->
-      <div id="autoLoginStatus" class="hidden mt-9 text-center text-xs text-[#a7d3cb]">
+      <div id="autoLoginStatus" class="hidden mt-9 text-center text-sm text-[#d3eee8]">
         <i class="fas fa-circle-notch fa-spin mr-1.5"></i>ログイン状態を確認しています...
       </div>
 
       <!-- ログインフォーム -->
-      <form id="loginForm" onsubmit="handleLogin(event)" class="mt-9 space-y-3">
+      <form id="loginForm" method="post" action="#" autocomplete="on" onsubmit="handleLogin(event)" class="mt-9 space-y-3.5 login-anim-form">
+        <!-- ログアウトしたときなどのお知らせ -->
+        <div id="loginNotice" class="hidden text-[13px] text-[#d9f7ee] bg-white/10 border border-white/20 rounded-xl px-3 py-2 flex items-start gap-2">
+          <i class="fas fa-circle-check mt-0.5 text-[#86efac]"></i>
+          <span id="loginNoticeMsg"></span>
+        </div>
+
+        <!-- パスワード自動入力・保存のための見えないユーザー名欄（画面には出ません） -->
+        <input type="text" name="username" id="usernameInput" value="此花区域" autocomplete="username" tabindex="-1" aria-hidden="true"
+          style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;">
+
         <div>
-          <label for="passwordInput" class="block text-[11px] font-medium text-[#bfe3db] mb-1.5">パスワード</label>
+          <label for="passwordInput" class="block text-[13px] font-semibold text-[#e3f4f0] mb-1.5">パスワード</label>
           <div class="relative">
-            <i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-[#a7d3cb] text-xs pointer-events-none"></i>
-            <input type="password" id="passwordInput" required placeholder="••••••••" autocomplete="current-password"
-              class="w-full pl-9 pr-11 py-2.5 rounded-2xl bg-[#14625a] border border-[#2f8176] text-white placeholder-[#7fb3aa] text-base focus:outline-none focus:ring-2 focus:ring-white/70 focus:border-transparent">
-            <button type="button" onclick="togglePasswordVisibility()" aria-label="パスワードの表示切替" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#a7d3cb] hover:text-white p-2">
-              <i id="eyeIcon" class="fas fa-eye text-sm"></i>
+            <i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-[#c4e6de] text-sm pointer-events-none"></i>
+            <input type="password" id="passwordInput" name="password" required placeholder="パスワードを入力" autocomplete="current-password"
+              enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" oninput="clearLoginMessages()"
+              class="w-full pl-10 pr-12 py-3 rounded-2xl bg-[#14625a] border border-[#3a8c80] text-white placeholder-[#a7d3cb] text-base focus:outline-none focus:ring-2 focus:ring-white/70 focus:border-transparent">
+            <button type="button" onclick="togglePasswordVisibility()" aria-label="パスワードの表示を切り替える" class="absolute right-1 top-1/2 -translate-y-1/2 text-[#c4e6de] hover:text-white p-3">
+              <i id="eyeIcon" class="fas fa-eye text-base"></i>
             </button>
           </div>
         </div>
 
         <!-- ログイン状態を保つ -->
-        <button type="button" id="keepLoginBtn" role="checkbox" aria-checked="false" onclick="toggleKeepLogin()" class="flex items-center gap-2 text-[11px] text-[#bfe3db] py-1">
-          <span id="keepLoginBox" class="w-4 h-4 rounded border border-[#7fb3aa] flex items-center justify-center transition">
-            <i id="keepLoginCheck" class="fas fa-check text-[9px] text-[#0e4d45] hidden"></i>
+        <button type="button" id="keepLoginBtn" role="checkbox" aria-checked="false" onclick="toggleKeepLogin()" class="w-full flex items-start gap-3 text-left py-2">
+          <span id="keepLoginBox" class="mt-0.5 w-6 h-6 shrink-0 rounded-md border-2 border-[#a7d3cb] flex items-center justify-center transition">
+            <i id="keepLoginCheck" class="fas fa-check text-xs text-[#0e4d45] hidden"></i>
           </span>
-          <span>ログイン状態を保つ</span>
+          <span class="flex flex-col">
+            <span class="text-sm font-semibold text-[#e3f4f0]">ログイン状態を保つ</span>
+            <span class="text-[11px] leading-snug text-[#b9ddd5] mt-0.5">30日間、この端末で保ちます。共有の端末では、チェックを外してください。</span>
+          </span>
         </button>
 
-        <div id="loginError" class="hidden text-[11px] text-[#fecaca] flex items-start gap-1.5">
+        <div id="loginError" class="hidden text-[13px] text-[#fecaca] flex items-start gap-1.5">
           <i class="fas fa-exclamation-circle mt-0.5"></i>
           <span id="loginErrorMsg">パスワードが正しくありません</span>
         </div>
 
-        <button type="submit" id="btnLoginSubmit" class="w-full py-2.5 rounded-2xl bg-white hover:bg-[#f0faf7] active:bg-[#dff2ed] text-[#0e4d45] font-bold text-sm transition flex items-center justify-center gap-1.5">
+        <button type="submit" id="btnLoginSubmit" class="w-full py-3 rounded-2xl bg-white hover:bg-[#f0faf7] active:bg-[#dff2ed] disabled:opacity-70 text-[#0e4d45] font-bold text-base transition flex items-center justify-center gap-2">
           <span id="loginBtnText">ログイン</span>
-          <i class="fas fa-arrow-right text-xs"></i>
+          <i class="fas fa-arrow-right text-sm"></i>
         </button>
       </form>
+
+      <!-- 注意書き・困ったときの案内・バージョン -->
+      <div class="mt-6 login-anim-foot">
+        <p class="text-[11px] leading-relaxed text-[#b9ddd5] flex items-start gap-1.5">
+          <i class="fas fa-shield-halved mt-0.5"></i>
+          <span>このアプリは関係者専用です。画面の内容を他の人に見せたり、共有したりしないでください。</span>
+        </p>
+
+        <details id="loginHelp" class="mt-4 text-[#d3eee8]">
+          <summary class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-semibold underline decoration-dotted underline-offset-4">
+            <i class="fas fa-circle-question"></i>ログインできないときは
+            <i class="fas fa-chevron-down text-[9px] login-help-chevron transition-transform"></i>
+          </summary>
+          <ul class="mt-2.5 space-y-1.5 text-[11px] leading-relaxed text-[#cfe9e2] list-disc pl-4">
+            <li>パスワードの大文字・小文字、全角・半角をご確認ください。目のアイコンで入力内容を確認できます。</li>
+            <li>パスワードが変更されたときは、新しいものを管理者にご確認ください。</li>
+            <li>電波が悪いときは、場所を変えてもう一度お試しください。</li>
+            <li>画面が古いままのときは、アプリをいったん閉じて、開き直してください。</li>
+          </ul>
+        </details>
+
+        <div class="mt-5 text-center text-[11px] text-[#a7d3cb]">バージョン <span id="loginVersionLabel"></span></div>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -834,7 +888,7 @@
     const OLD_CACHE_KEYS = ['konohana_mansion_cache_v1'];   // 旧版（リンクURLが入っていた）は削除する
     const PWHASH_KEY = 'konohana_pw_hash_v1';
     const VIEW_KEY = 'konohana_map_view_v1';
-    const APP_VERSION = '2026.10.09-3';                 // 画面を更新したら、この番号も変える（古い画面の検出に使う）
+    const APP_VERSION = '2026.10.09-4';                 // 画面を更新したら、この番号も変える（古い画面の検出に使う）
     const ROOM_CACHE_KEY = 'konohana_room_cache_v1';    // 部屋番号一覧の端末保存（次に開くとき先に表示する）
     const ROOM_CACHE_MAX = 40;
     const PENDING_KEY = 'konohana_pending_v1';          // 電波がなくて送れなかった記録
@@ -2108,11 +2162,28 @@
       const box = document.getElementById('keepLoginBox');
       const chk = document.getElementById('keepLoginCheck');
       if (btn) btn.setAttribute('aria-checked', keepLogin ? 'true' : 'false');
-      if (box) box.className = 'w-4 h-4 rounded border flex items-center justify-center transition ' + (keepLogin ? 'bg-white border-white' : 'border-[#7fb3aa]');
+      if (box) box.className = 'mt-0.5 w-6 h-6 shrink-0 rounded-md border-2 flex items-center justify-center transition ' + (keepLogin ? 'bg-white border-white' : 'border-[#a7d3cb]');
       if (chk) chk.classList.toggle('hidden', !keepLogin);
     }
 
+    // ログアウトしたときなどのお知らせ（緑）。入力を始めると消える
+    function showLoginNotice(msg) {
+      const box = document.getElementById('loginNotice');
+      const txt = document.getElementById('loginNoticeMsg');
+      if (txt) txt.textContent = msg;
+      if (box) box.classList.remove('hidden');
+    }
+
+    function clearLoginMessages() {
+      const n = document.getElementById('loginNotice');
+      const e = document.getElementById('loginError');
+      if (n) n.classList.add('hidden');
+      if (e) e.classList.add('hidden');
+    }
+
     function showLoginError(msg) {
+      const nb = document.getElementById('loginNotice');
+      if (nb) nb.classList.add('hidden');
       const errDiv = document.getElementById('loginError');
       const errMsg = document.getElementById('loginErrorMsg');
       if (errMsg) errMsg.textContent = msg;
@@ -2195,7 +2266,7 @@
 
       if (!pwd) return;
 
-      if (errDiv) errDiv.classList.add("hidden");
+      clearLoginMessages();
       submitBtn.disabled = true;
       document.getElementById("loginBtnText").textContent = "確認中...";
 
@@ -2275,7 +2346,6 @@
 
     function onLoginSuccess() {
       document.getElementById("loginScreen").classList.add("hidden");
-      document.getElementById("passwordInput").value = "";
 
       const controls = document.getElementById("headerControls");
       const areaFilter = document.getElementById("headerAreaFilter");
@@ -2372,6 +2442,7 @@
       document.getElementById("loginError").classList.add("hidden");
       setAutoLoginState(false);
       document.getElementById("loginScreen").classList.remove("hidden");
+      showLoginNotice("ログアウトしました");
       document.getElementById("headerControls").classList.add("hidden");
       document.getElementById("headerAreaFilter").classList.add("hidden");
     }
@@ -3294,8 +3365,10 @@
     // ============================================================
     // 起動時の初期化
     // ============================================================
-    const verEl = document.getElementById('appVersionLabel');
-    if (verEl) verEl.textContent = APP_VERSION;
+    ['appVersionLabel', 'loginVersionLabel'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = APP_VERSION;
+    });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') { checkForUpdate(); flushPending(false); }
     });
