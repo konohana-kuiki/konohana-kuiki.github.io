@@ -79,8 +79,6 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <!-- ピンのまとめ表示（クラスタリング） -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 
   <style>
     html, body {
@@ -226,16 +224,6 @@
     #loginHelp summary { list-style: none; }
     #loginHelp summary::-webkit-details-marker { display: none; }
     #loginHelp[open] .login-help-chevron { transform: rotate(180deg); }
-
-    /* まとめ表示（クラスタ）のピン */
-    .konohana-cluster-wrap { background: transparent; border: none; }
-    .konohana-cluster {
-      display: flex; align-items: center; justify-content: center;
-      border-radius: 50%; background: #13685e; color: #ffffff;
-      font-weight: 800; font-size: 13px; border: 3px solid #ffffff;
-      box-shadow: 0 3px 10px rgba(0,0,0,0.35);
-    }
-    .konohana-cluster.is-urgent { box-shadow: 0 0 0 3px #f59e0b, 0 3px 10px rgba(0,0,0,0.35); }
 
     /* 管理者モード中は、上の帯の分だけ全体を下げる */
     body.admin-on { padding-top: 1.5rem; }
@@ -888,7 +876,7 @@
     const OLD_CACHE_KEYS = ['konohana_mansion_cache_v1'];   // 旧版（リンクURLが入っていた）は削除する
     const PWHASH_KEY = 'konohana_pw_hash_v1';
     const VIEW_KEY = 'konohana_map_view_v1';
-    const APP_VERSION = '2026.10.10-1';                 // 画面を更新したら、この番号も変える（古い画面の検出に使う）
+    const APP_VERSION = '2026.10.10-2';                 // 画面を更新したら、この番号も変える（古い画面の検出に使う）
     const ROOM_CACHE_KEY = 'konohana_room_cache_v1';    // 部屋番号一覧の端末保存（次に開くとき先に表示する）
     const ROOM_CACHE_MAX = 40;
     const PENDING_KEY = 'konohana_pending_v1';          // 電波がなくて送れなかった記録
@@ -2596,31 +2584,8 @@
     // ============================================================
     // 地図
     // ============================================================
-    // ピンが多いときは、近いものを数字の丸にまとめる（読み込めなかった場合は、これまでどおり1件ずつ表示）
-    function buildClusterIcon(cluster) {
-      const kids = cluster.getAllChildMarkers();
-      const n = kids.length;
-      const urgent = kids.some(k => k.options && k.options.mansionUrgent);
-      const size = n < 10 ? 40 : (n < 50 ? 46 : 54);
-      return L.divIcon({
-        html: `<div class="konohana-cluster ${urgent ? 'is-urgent' : ''}" style="width:${size}px;height:${size}px;">${n}</div>`,
-        className: 'konohana-cluster-wrap',
-        iconSize: [size, size]
-      });
-    }
 
     function createMarkersLayer() {
-      try {
-        if (typeof L.markerClusterGroup === 'function') {
-          return L.markerClusterGroup({
-            showCoverageOnHover: false,
-            maxClusterRadius: 48,
-            spiderfyOnMaxZoom: true,
-            disableClusteringAtZoom: 17,
-            iconCreateFunction: buildClusterIcon
-          });
-        }
-      } catch (e) { /* 通常の表示にする */ }
       return L.layerGroup();
     }
 
@@ -2895,8 +2860,7 @@
         mansionMarkersMap[m.id] = marker;
         bounds.push([m.lat, m.lng]);
       });
-      if (typeof markersLayer.addLayers === 'function') markersLayer.addLayers(newMarkers);
-      else newMarkers.forEach(mk => markersLayer.addLayer(mk));
+      newMarkers.forEach(mk => markersLayer.addLayer(mk));
 
       if (shouldFitBounds && bounds.length > 0) {
         if (bounds.length === 1) {
