@@ -68,11 +68,11 @@
 
   <!-- Tailwind CSS -->
   <!-- 外部ファイルの接続を先に始めて、起動を少し速くする -->
-  <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
   <link rel="preconnect" href="https://script.google.com">
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 事前にビルドした tailwind.css があればそれを使い、無い・読めないときだけ従来どおり外部（CDN）から読み込む -->
+  <link rel="stylesheet" href="tailwind.css?v=2026.10.10-3" onerror="var s=document.createElement('script');s.src='https://cdn.tailwindcss.com';document.head.appendChild(s);">
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Leaflet GIS Map Library -->
@@ -571,6 +571,16 @@
     </div>
   </div>
 
+  <!-- 管理者：ピンの位置を直すときの操作バー -->
+  <div id="pinEditBar" class="hidden fixed left-2 right-2 bottom-4 z-[10006] bg-white border-2 border-amber-400 rounded-2xl shadow-2xl p-3 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-[420px] btn-touch-ui">
+    <div class="text-xs font-bold text-amber-900 flex items-center gap-1.5"><i class="fas fa-up-down-left-right"></i><span id="pinEditTitle">ピンの位置を直す</span></div>
+    <div class="text-[11px] text-slate-500 mt-0.5 leading-snug">ピンをドラッグするか、地図をタップして正しい位置に動かしてください。<span id="pinEditMoved" class="font-bold text-slate-700"></span></div>
+    <div class="flex gap-2 mt-2.5">
+      <button type="button" onclick="cancelPinEdit()" class="flex-1 py-2.5 rounded-xl text-sm font-bold border border-slate-300 text-slate-600 bg-white">キャンセル</button>
+      <button type="button" id="pinEditSaveBtn" onclick="savePinEdit()" class="flex-1 py-2.5 rounded-xl text-sm font-bold bg-amber-400 hover:bg-amber-500 text-amber-950">この位置で保存</button>
+    </div>
+  </div>
+
   <!-- 新しいバージョンのお知らせ -->
   <div id="updateBanner" class="hidden fixed left-1/2 -translate-x-1/2 bottom-24 z-[10005] bg-emerald-700 text-white text-xs pl-4 pr-2 py-2 rounded-full shadow-lg items-center gap-2 btn-touch-ui max-w-[92vw]">
     <i class="fas fa-circle-arrow-up"></i>
@@ -876,7 +886,7 @@
     const OLD_CACHE_KEYS = ['konohana_mansion_cache_v1'];   // 旧版（リンクURLが入っていた）は削除する
     const PWHASH_KEY = 'konohana_pw_hash_v1';
     const VIEW_KEY = 'konohana_map_view_v1';
-    const APP_VERSION = '2026.10.10-2';                 // 画面を更新したら、この番号も変える（古い画面の検出に使う）
+    const APP_VERSION = '2026.10.10-3';                 // 画面を更新したら、この番号も変える（古い画面の検出に使う）
     const ROOM_CACHE_KEY = 'konohana_room_cache_v1';    // 部屋番号一覧の端末保存（次に開くとき先に表示する）
     const ROOM_CACHE_MAX = 40;
     const PENDING_KEY = 'konohana_pending_v1';          // 電波がなくて送れなかった記録
@@ -1139,11 +1149,17 @@
       });
     }
 
+    let sortWaitingForLocation = false;
+
     function toggleSortByDistance() {
       if (!sortByDistance && !userCoordinates) {
-        showToast("現在地を取得中、またはGPSが不許可です", false);
+        // まだ現在地が取れていないときは、取得を始めて、取れたら自動で「近い順」にする
+        sortWaitingForLocation = true;
+        showToast("現在地を取得しています…", true);
+        startLocationTracking();
         return;
       }
+      sortWaitingForLocation = false;
       sortByDistance = !sortByDistance;
       updateSortUI();
       renderDrawerList();
@@ -1159,6 +1175,13 @@
 
     function onLocationUpdated() {
       if (!userCoordinates) return;
+      if (sortWaitingForLocation) {
+        sortWaitingForLocation = false;
+        sortByDistance = true;
+        updateSortUI();
+        showToast("現在地から近い順に並べました", false);
+        lastListCoords = null;
+      }
       const moved = !lastListCoords ||
         calcDistanceMeters(lastListCoords[0], lastListCoords[1], userCoordinates[0], userCoordinates[1]) > 50;
       if (!moved) return;
@@ -1349,6 +1372,13 @@
           </a>`
         : '';
 
+      const pinEditBtn = isAdminOn()
+        ? `<button type="button" onclick="startPinEdit(${Number(m.id)})" class="mt-2 flex items-center justify-center w-full px-4 py-3 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold rounded-2xl text-sm border border-amber-300 transition gap-2">
+            <i class="fas fa-up-down-left-right text-xs"></i>
+            <span>ピンの位置を直す（管理者）</span>
+          </button>`
+        : '';
+
       box.innerHTML = `
         <div class="pr-10 flex items-center gap-1.5 flex-wrap mb-2">
           ${buildAreaBadge(area)}
@@ -1363,6 +1393,7 @@
         ${noteBox}
         ${roomBtn}
         ${adminBtn}
+        ${pinEditBtn}
         <button type="button" onclick="openRouteSheet(${Number(m.id)})" class="mt-2.5 flex items-center justify-center w-full px-2 py-3 bg-white border-2 border-[#13685e] text-[#13685e] font-bold rounded-2xl text-sm transition gap-1.5 hover:bg-emerald-50 active:bg-emerald-100">
           <i class="fas fa-route text-xs"></i><span>ルート案内</span>
         </button>
@@ -2854,7 +2885,7 @@
       const newMarkers = [];
       filteredList.forEach(m => {
         const marker = L.marker([m.lat, m.lng], { icon: buildPinIcon(m), mansionUrgent: isUrgentMansion(m) });
-        marker.on('click', () => openDetailSheet(m.id));
+        marker.on('click', () => { if (pinEdit) return; openDetailSheet(m.id); });
         newMarkers.push(marker);
 
         mansionMarkersMap[m.id] = marker;
@@ -3132,6 +3163,10 @@
         },
         (err) => {
           console.warn("GPS Location error: ", err);
+          if (sortWaitingForLocation) {
+            sortWaitingForLocation = false;
+            showToast(err && err.code === 1 ? "位置情報が許可されていません。端末の設定でこのサイトの位置情報を許可してください" : "現在地を取得できませんでした", false);
+          }
         },
         {
           enableHighAccuracy: true,
@@ -3205,6 +3240,100 @@
     }
 
     // ============================================================
+    // 管理者：ピンの位置を直す
+    // ============================================================
+    let pinEdit = null;   // { id, m, marker, origMarker, orig:[lat,lng], saving }
+
+    function pinEditUpdateMoved() {
+      const el = document.getElementById('pinEditMoved');
+      if (!el || !pinEdit) return;
+      const ll = pinEdit.marker.getLatLng();
+      const d = calcDistanceMeters(pinEdit.orig[0], pinEdit.orig[1], ll.lat, ll.lng);
+      el.textContent = d < 1 ? '（まだ動かしていません）' : '（元の位置から ' + formatDistance(d) + '）';
+    }
+
+    function onPinEditMapClick(e) {
+      if (!pinEdit || pinEdit.saving) return;
+      pinEdit.marker.setLatLng(e.latlng);
+      pinEditUpdateMoved();
+    }
+
+    function startPinEdit(id) {
+      if (!isAdminOn() || !map || pinEdit) return;
+      const m = findMansion(id);
+      if (!m) return;
+      closeDetailSheet();
+      if (isDrawerOpen) toggleMansionListDrawer();
+
+      const origMarker = mansionMarkersMap[m.id] || null;
+      if (origMarker) origMarker.setOpacity(0);
+      const marker = L.marker([m.lat, m.lng], { icon: buildPinIcon(m), draggable: true, zIndexOffset: 5000 }).addTo(map);
+      marker.on('drag', pinEditUpdateMoved);
+      marker.on('dragend', pinEditUpdateMoved);
+      pinEdit = { id: m.id, m: m, marker: marker, origMarker: origMarker, orig: [m.lat, m.lng], saving: false };
+      map.on('click', onPinEditMapClick);
+      map.setView([m.lat, m.lng], Math.max(map.getZoom(), 18));
+
+      const title = document.getElementById('pinEditTitle');
+      if (title) title.textContent = '「' + m.name + '」のピンの位置を直す';
+      const bar = document.getElementById('pinEditBar');
+      if (bar) bar.classList.remove('hidden');
+      pinEditUpdateMoved();
+    }
+
+    function endPinEdit() {
+      if (!pinEdit) return;
+      try { map.off('click', onPinEditMapClick); } catch (e) { /* 何もしない */ }
+      try { map.removeLayer(pinEdit.marker); } catch (e) { /* 何もしない */ }
+      if (pinEdit.origMarker) pinEdit.origMarker.setOpacity(1);
+      pinEdit = null;
+      const bar = document.getElementById('pinEditBar');
+      if (bar) bar.classList.add('hidden');
+      const btn = document.getElementById('pinEditSaveBtn');
+      if (btn) { btn.disabled = false; btn.textContent = 'この位置で保存'; }
+    }
+
+    function cancelPinEdit() {
+      if (!pinEdit || pinEdit.saving) return;
+      const id = pinEdit.id;
+      endPinEdit();
+      openDetailSheet(id);
+    }
+
+    function savePinEdit() {
+      const pe = pinEdit;
+      if (!pe || pe.saving) return;
+      const ll = pe.marker.getLatLng();
+      if (calcDistanceMeters(pe.orig[0], pe.orig[1], ll.lat, ll.lng) < 1) { showToast('位置が動いていません', false); return; }
+      if (!isAdminOn()) { endPinEdit(); return; }
+      pe.saving = true;
+      const btn = document.getElementById('pinEditSaveBtn');
+      if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+
+      const fail = (msg) => {
+        pe.saving = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'この位置で保存'; }
+        showToast('保存できませんでした' + (msg ? '：' + msg : ''), false);
+      };
+      if (!(typeof google !== 'undefined' && google.script && google.script.run)) { fail('テスト環境では保存できません'); return; }
+
+      google.script.run
+        .withSuccessHandler((res) => {
+          if (!res || !res.success) { fail((res && res.error) || ''); return; }
+          const m = pe.m;
+          m.lat = res.lat; m.lng = res.lng;
+          const id = pe.id;
+          endPinEdit();
+          renderMarkers(false);
+          if (isDrawerOpen) renderDrawerList(true);
+          showToast('ピンの位置を保存しました', false);
+          openDetailSheet(id);
+        })
+        .withFailureHandler((err) => fail((err && err.message) || '通信エラー'))
+        .setMansionLocation(userAuthPassword, adminPasswordMem, { sheetName: pe.m.sheetName, row: pe.m.row, name: pe.m.name }, ll.lat, ll.lng);
+    }
+
+    // ============================================================
     // 管理者：登録内容の確認（要確認一覧）
     // ============================================================
     let adminCheckRun = 0;
@@ -3266,6 +3395,10 @@
       const link = (url && /^https:\/\/docs\.google\.com\//.test(url))
         ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="shrink-0 text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-300 rounded-full px-2.5 py-1">シート</a>`
         : '';
+      const mm = mansionDataList.find(x => x.sheetName === it.sheetName && x.row === it.row && x.name === it.name);
+      const mapBtn = mm
+        ? `<button type="button" onclick="showMansionOnMap(${Number(mm.id)})" class="shrink-0 text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">地図</button>`
+        : '';
       return `
         <div class="flex items-start gap-2 p-2.5 rounded-xl border border-slate-200 bg-white">
           <div class="flex-1 min-w-0">
@@ -3273,8 +3406,17 @@
             <div class="text-[11px] text-slate-400">${esc(it.sheetName)} ・ ${esc(it.row)}行目</div>
             <div class="text-xs text-red-600 mt-0.5 leading-snug">${esc(it.reason)}</div>
           </div>
-          ${link}
+          <div class="flex flex-col gap-1.5 items-end">${mapBtn}${link}</div>
         </div>`;
+    }
+
+    // 登録内容の確認から、そのマンションを地図で開く
+    function showMansionOnMap(id) {
+      closeAdminCheck();
+      if (isDrawerOpen) toggleMansionListDrawer();
+      const m = findMansion(id);
+      if (m && map) map.setView([m.lat, m.lng], 18);
+      openDetailSheet(id);
     }
 
     function renderAdminCheck() {
